@@ -1,97 +1,145 @@
- #include "msp432.h"
+#include "msp.h"
+#include "Delay.h"
 
-#define RS 1     /* P4.0 mask */
-#define RW 2     /* P4.1 mask */
-#define EN 4     /* P4.2 mask */
 
-void delayMs(int n);
-void LCD_nibble_write(unsigned char data, unsigned char control);
-void LCD_command(unsigned char command);
-void LCD_data(unsigned char data);
-void LCD_init(void);
+//LCD Commands
+#define clear_display 0x01
+#define return_home 0x02
+#define function_set 0x28
+#define wake_up 0x30
+#define Bit4_mode 0x20
+#define cursor_right 0x06
+#define display_on 0x0F
 
-int main(void) {
-    LCD_init();
+//Control Bits
+#define RS BIT0
+#define RW BIT1
+#define EN BIT2
 
-    for(;;) {
-        LCD_command(1);     /* clear display */
-        delayMs(500);
-        LCD_command(0x80);  /* set cursor at beginning of first line */
-        LCD_data('H');      /* write the word "Hello" */
-        LCD_data('E');
-        LCD_data('L');
-        LCD_data('L');
-        LCD_data('L');
-        LCD_command(0xc0);  /* set cursor at beginning of first line */
-        LCD_data('M');      /* write the word "Hello" */
-        LCD_data('I');
-        LCD_data('C');
-        LCD_data('R');
-        LCD_data('O');
-        LCD_data('D');
-        LCD_data('G');
-        LCD_data('I');
-        LCD_data('S');
-        LCD_data('O');
-        LCD_data('F');
-        LCD_data('T');
+//Data Bits
+#define D7 BIT3
+#define D6 BIT2
+#define D5 BIT1
+#define D4 BIT0
 
-        delayMs(500);
+#define dataBits D7|D6|D5|D4
+#define ctrlBits EN|RW|RS
+
+void nibble(unsigned char data);
+void configureTimerA1();
+
+void configureLCD_Pins();
+void write_command(unsigned char cmd);
+void write_data(unsigned char cmd);
+void configureLCD();
+
+
+
+void main(void)
+{
+    WDT_A->CTL = WDT_A_CTL_PW | WDT_A_CTL_HOLD;     // stop watchdog timer
+
+    configureTimerA0();
+    configureTimerA1();
+    configureLCD_Pins();
+    configureLCD();
+
+    while(1){
+
     }
+
+
+
 }
 
-void LCD_init(void) {
-    P4->DIR = 0xFF;     /* make P4 pins output for data and controls */
-    delayMs(30);                /* initialization sequence */
-    LCD_nibble_write(0x30, 0);
-    delayMs(10);
-    LCD_nibble_write(0x30, 0);
-    delayMs(1);
-    LCD_nibble_write(0x30, 0);
-    delayMs(1);
-    LCD_nibble_write(0x20, 0);  /* use 4-bit data mode */
-    delayMs(1);
 
-    LCD_command(0x28);      /* set 4-bit data, 2-line, 5x7 font */
-    LCD_command(0x06);      /* move cursor right after each char */
-    LCD_command(0x01);      /* clear screen, move cursor to home */
-    LCD_command(0x0F);      /* turn on display, cursor blinking */
+
+
+
+void configureLCD_Pins(){
+
+    //Data Pins - 4.0-4.3
+    P4->SEL0 &= ~(dataBits);
+    P4->SEL1 &= ~(dataBits);
+
+    //Control Pins - 5.0-5.2
+    P5->SEL0 &= ~(ctrlBits);
+    P5->SEL1 &= ~(ctrlBits);
+
+    //Setup all pins as output
+    P4->DIR |= dataBits;
+    P5->DIR |= ctrlBits;
+
 }
 
-/* With 4-bit mode, each command or data is sent twice with upper
- * nibble first then lower nibble.
- */
-void LCD_nibble_write(unsigned char data, unsigned char control) {
-    data &= 0xF0;           /* clear lower nibble for control */
-    control &= 0x0F;        /* clear upper nibble for data */
-    P4->OUT = data | control;       /* RS = 0, R/W = 0 */
-    P4->OUT = data | control | EN;  /* pulse E */
-    delayMs(0);
-    P4->OUT = data;                 /* clear E */
-    P4->OUT = 0;
+void configureLCD(){
+
+    delay_milliSec(30);
+
+    write_command(wake_up);
+
+    delay_milliSec(10);
+
+    write_command(wake_up);
+
+    delay_milliSec(1);
+
+    write_command(wake_up);
+
+    delay_milliSec(1);
+
+    write_command(Bit4_mode);
+
+    delay_milliSec(1);
+
+    write_command(function_set);
+    write_command(cursor_right);
+    write_command(clear_display);
+    write_command(display_on);
+
+
 }
 
-void LCD_command(unsigned char command) {
-    LCD_nibble_write(command & 0xF0, 0);    /* upper nibble first */
-    LCD_nibble_write(command << 4, 0);      /* then lower nibble */
+void nibble(unsigned char data){
+    P4->OUT &= 0x00;
+    P4->OUT |= data;
 
-    if (command < 4)
-        delayMs(4);         /* commands 1 and 2 need up to 1.64ms */
-    else
-        delayMs(1);         /* all others 40 us */
+    P5->OUT |= EN;
+
+    delay_microSec(500);
+
+    P5->OUT &= ~EN;
+
 }
 
-void LCD_data(unsigned char data) {
-    LCD_nibble_write(data & 0xF0, RS);    /* upper nibble first */
-    LCD_nibble_write(data << 4, RS);      /* then lower nibble  */
 
-    delayMs(1);
+void write_data(unsigned char cmd){
+
+
+    P5->OUT &= ~RW;
+    P5->OUT |= RS;
+
+    nibble((cmd >> 4) & 0x0F);
+
+    delay_milliSec(10);
+
+    nibble(cmd & 0x0F);
+
+    delay_milliSec(10);
+
 }
 
-/* delay milliseconds when system clock is at 3 MHz */
-void delayMs(int n) {
-    int i, j;
+void write_command(unsigned char cmd){
 
-    for (j = 0; j < n; j++)
-        for (i = 750; i > 0; i--);      /* Delay */
+    P5->OUT &= 0x00;
+    P5->OUT &= ~(RW|RS);
+
+    nibble((cmd >> 4) & 0x0F);
+
+    delay_milliSec(2);
+
+    nibble(cmd & 0x0F);
+
+    delay_milliSec(2);
+
 }
